@@ -1,0 +1,23 @@
+{
+  "exact_hosts": [
+    "registry.ollama.ai",
+    "registry-1.docker.io",
+    "auth.docker.io",
+    "production.cloudflare.docker.com",
+    "production.cloudfront.docker.com",
+    "archive.ubuntu.com",
+    "security.ubuntu.com",
+    "download.docker.com",
+    "nvidia.github.io",
+    "ports.ubuntu.com",
+    "esm.ubuntu.com",
+    "pkgs.tailscale.com",
+    "developer.download.nvidia.com",
+    "repo.download.nvidia.com",
+    "workbench.download.nvidia.com",
+    "snapshot.ppa.launchpadcontent.net",
+    "deb.nodesource.com"
+  ],
+  "domains_and_subdomains": ["openai.com", "chatgpt.com"],
+  "subdomains_only": ["r2.cloudflarestorage.com"]
+}
