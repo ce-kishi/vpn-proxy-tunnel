@@ -51,6 +51,8 @@ class AllowlistTests(unittest.TestCase):
             "ports.ubuntu.com", "esm.ubuntu.com", "pkgs.tailscale.com",
             "developer.download.nvidia.com", "repo.download.nvidia.com",
             "workbench.download.nvidia.com", "snapshot.ppa.launchpadcontent.net",
+            "ppa.launchpadcontent.net", "storage.googleapis.com",
+            "packages.cloud.google.com",
             "deb.nodesource.com",
             "API.OPENAI.COM.",
         ]
@@ -68,7 +70,10 @@ class AllowlistTests(unittest.TestCase):
             "sub.ports.ubuntu.com", "esm.ubuntu.com.attacker.example",
             "evilpkgs.tailscale.com", "nvidia.com", "download.nvidia.com",
             "sub.developer.download.nvidia.com", "repo.download.nvidia.com.evil.example",
-            "evilworkbench.download.nvidia.com", "ppa.launchpadcontent.net",
+            "evilworkbench.download.nvidia.com", "ppa.launchpad.net",
+            "sub.ppa.launchpadcontent.net", "sub.storage.googleapis.com",
+            "sub.packages.cloud.google.com", "storage.googleapis.com.evil.example",
+            "packages.cloud.google.com.evil.example",
             "sub.snapshot.ppa.launchpadcontent.net", "nodesource.com",
         ]
         for host in hosts:

@@ -16,6 +16,9 @@
     "repo.download.nvidia.com",
     "workbench.download.nvidia.com",
     "snapshot.ppa.launchpadcontent.net",
+    "ppa.launchpadcontent.net",
+    "storage.googleapis.com",
+    "packages.cloud.google.com",
     "deb.nodesource.com"
   ],
   "domains_and_subdomains": ["openai.com", "chatgpt.com"],
