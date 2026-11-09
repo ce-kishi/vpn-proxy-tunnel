@@ -18,6 +18,7 @@
     "snapshot.ppa.launchpadcontent.net",
     "ppa.launchpadcontent.net",
     "storage.googleapis.com",
+    "releases.bazel.build",
     "packages.cloud.google.com",
     "deb.nodesource.com"
   ],

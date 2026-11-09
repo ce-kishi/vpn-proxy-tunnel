@@ -52,6 +52,7 @@ class AllowlistTests(unittest.TestCase):
             "developer.download.nvidia.com", "repo.download.nvidia.com",
             "workbench.download.nvidia.com", "snapshot.ppa.launchpadcontent.net",
             "ppa.launchpadcontent.net", "storage.googleapis.com",
+            "releases.bazel.build",
             "packages.cloud.google.com",
             "deb.nodesource.com",
             "API.OPENAI.COM.",
@@ -74,6 +75,7 @@ class AllowlistTests(unittest.TestCase):
             "sub.ppa.launchpadcontent.net", "sub.storage.googleapis.com",
             "sub.packages.cloud.google.com", "storage.googleapis.com.evil.example",
             "packages.cloud.google.com.evil.example",
+            "sub.releases.bazel.build", "releases.bazel.build.evil.example",
             "sub.snapshot.ppa.launchpadcontent.net", "nodesource.com",
         ]
         for host in hosts:
