@@ -18,6 +18,7 @@ proxy_port=$((10#$proxy_port))
 python_bin="$(select_python3)"
 proxy_pid=""
 ssh_pid=""
+ready_dir=""
 cleanup() {
   if [[ -n "$ssh_pid" ]]; then
     kill "$ssh_pid" 2>/dev/null || true
@@ -27,18 +28,27 @@ cleanup() {
     kill "$proxy_pid" 2>/dev/null || true
     wait "$proxy_pid" 2>/dev/null || true
   fi
+  if [[ -n "$ready_dir" ]]; then
+    rm -f "$ready_dir/ready"
+    rmdir "$ready_dir"
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-"$python_bin" "$script_dir/http_connect_proxy.py" "$proxy_port" &
+ready_dir="$(mktemp -d)"
+"$python_bin" "$script_dir/http_connect_proxy.py" "$proxy_port" \
+  --ready-file "$ready_dir/ready" &
 proxy_pid=$!
-sleep 0.3
-if ! kill -0 "$proxy_pid" 2>/dev/null; then
-  echo "Proxy failed to start on 127.0.0.1:$proxy_port." >&2
-  exit 1
-fi
+startup_deadline=$((SECONDS + 15))
+while [[ ! -f "$ready_dir/ready" ]]; do
+  if ! kill -0 "$proxy_pid" 2>/dev/null || ((SECONDS >= startup_deadline)); then
+    echo "Proxy failed to start on 127.0.0.1:$proxy_port." >&2
+    exit 1
+  fi
+  sleep 0.05
+done
 echo "Starting SSH tunnel to $remote_host (remote proxy: http://127.0.0.1:$proxy_port)."
 echo "Keep this terminal open. Press Ctrl+C to stop the tunnel and proxy."
 ssh -N -T -o ExitOnForwardFailure=yes -o ConnectTimeout=15 \

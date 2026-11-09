@@ -1,6 +1,9 @@
 """Allowlist policy and loopback protocol tests; no external network access."""
 
 import json
+import os
+import select
+import shlex
 import socket
 import subprocess
 import sys
@@ -160,11 +163,93 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(peer.recv(4096), b"request bytes")
                 peer.sendall(b"response bytes")
                 self.assertEqual(client.recv(4096), b"response bytes")
+                peer.shutdown(socket.SHUT_WR)
             connect.assert_called_once_with(("archive.ubuntu.com", 443), timeout=15)
             deadline = time.monotonic() + 3
             while upstream.fileno() != -1 and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertEqual(upstream.fileno(), -1, "handler did not close its socket")
+
+    def test_upstream_response_is_relayed_while_upload_is_backpressured(self):
+        upstream, peer = socket.socketpair()
+        upstream.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        self.addCleanup(upstream.close)
+        peer.settimeout(3)
+        with (
+            peer,
+            patch.object(proxy.socket, "create_connection", return_value=upstream),
+            client_socket(self.server.server_address) as client,
+        ):
+            client.sendall(b"CONNECT archive.ubuntu.com:443 HTTP/1.1\r\n\r\n")
+            self.assertIn(b"200 Connection Established", client.recv(4096))
+            # Fill the proxy's upstream send buffer without blocking this test.
+            client.sendall(b"x" * 65536)
+            self.assertEqual(peer.recv(1), b"x")
+            peer.sendall(b"early rejection")
+            self.assertEqual(client.recv(4096), b"early rejection")
+
+    def test_idle_select_wakeup_does_not_close_tunnel(self):
+        upstream, peer = socket.socketpair()
+        self.addCleanup(upstream.close)
+        idle = threading.Event()
+        real_select = select.select
+
+        def wake_once(*args, **kwargs):
+            if not idle.is_set():
+                idle.set()
+                return [], [], []
+            return real_select(*args, **kwargs)
+
+        with (
+            peer,
+            patch.object(proxy.socket, "create_connection", return_value=upstream),
+            patch.object(proxy.select, "select", side_effect=wake_once),
+            client_socket(self.server.server_address) as client,
+        ):
+            client.sendall(b"CONNECT api.openai.com:443 HTTP/1.1\r\n\r\n")
+            self.assertIn(b"200 Connection Established", client.recv(4096))
+            self.assertTrue(idle.wait(3))
+            peer.sendall(b"delayed response")
+            self.assertEqual(client.recv(4096), b"delayed response")
+
+    def test_half_closed_upload_is_fully_flushed_before_response(self):
+        upstream, peer = socket.socketpair()
+        upstream.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        self.addCleanup(upstream.close)
+        peer.settimeout(3)
+        payload = b"upload data" * 30000
+        failures = []
+
+        def upload(client):
+            try:
+                client.sendall(payload)
+                client.shutdown(socket.SHUT_WR)
+            except OSError as exc:
+                failures.append(exc)
+
+        with (
+            peer,
+            patch.object(proxy.socket, "create_connection", return_value=upstream),
+            client_socket(self.server.server_address) as client,
+        ):
+            client.sendall(b"CONNECT archive.ubuntu.com:443 HTTP/1.1\r\n\r\n")
+            self.assertIn(b"200 Connection Established", client.recv(4096))
+            sender = threading.Thread(target=upload, args=(client,), daemon=True)
+            sender.start()
+            received = bytearray()
+            while True:
+                chunk = peer.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            sender.join(timeout=3)
+            self.assertFalse(sender.is_alive())
+            self.assertFalse(failures)
+            self.assertEqual(received, payload)
+            peer.sendall(b"upload accepted")
+            peer.shutdown(socket.SHUT_WR)
+            self.assertEqual(client.recv(4096), b"upload accepted")
+            self.assertEqual(client.recv(1), b"")
 
 
 class CommandLineTests(unittest.TestCase):
@@ -242,6 +327,60 @@ class CommandLineTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Address already in use", result.stderr)
+
+
+class TunnelStartupTests(unittest.TestCase):
+    def run_tunnel(self, directory, port, check_proxy=False):
+        root = Path(directory)
+        launcher = root / "python-launcher"
+        launcher.write_text(
+            '#!/bin/sh\nif [ "$1" != "-c" ]; then sleep 0.6; fi\n'
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        launcher.chmod(0o700)
+        marker = root / "ssh-called"
+        ssh = root / "ssh"
+        ssh.write_text(
+            f"#!{sys.executable}\n"
+            "import socket\nfrom pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('called')\n"
+            + (
+                f"with socket.create_connection(('127.0.0.1', {port}), timeout=3) as client:\n"
+                "    client.sendall(b'CONNECT denied.example:443 HTTP/1.1\\r\\n\\r\\n')\n"
+                "    assert b'403 Forbidden' in client.recv(4096)\n"
+                if check_proxy else ""
+            )
+        )
+        ssh.chmod(0o700)
+        env = dict(
+            os.environ,
+            PATH=str(root) + os.pathsep + os.environ["PATH"],
+            TUNNEL_PYTHON_BIN=str(launcher),
+            TUNNEL_REMOTE_HOST="unused-test-host",
+            TUNNEL_PROXY_PORT=str(port),
+        )
+        result = subprocess.run(
+            ["bash", str(REPO / "proxy-tunnel.sh")], env=env,
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        return result, marker.exists()
+
+    def test_slow_port_collision_never_starts_ssh(self):
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            occupied.listen()
+            result, ssh_called = self.run_tunnel(directory, occupied.getsockname()[1])
+            self.assertFalse(ssh_called, result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_slow_successful_start_is_ready_before_ssh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            result, ssh_called = self.run_tunnel(directory, port, check_proxy=True)
+            self.assertTrue(ssh_called, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

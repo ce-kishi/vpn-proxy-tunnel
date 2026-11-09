@@ -106,19 +106,49 @@ class ConnectHandler(socketserver.BaseRequestHandler):
 
         with upstream:
             client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            client.settimeout(None)
-            upstream.settimeout(None)
             sockets = (client, upstream)
-            while True:
-                readable, _, exceptional = select.select(sockets, (), sockets, 60)
-                if exceptional or not readable:
-                    return
-                for source in readable:
-                    data = source.recv(65536)
-                    if not data:
+            other = {client: upstream, upstream: client}
+            for connection in sockets:
+                connection.setblocking(False)
+            readers = set(sockets)
+            pending = {connection: bytearray() for connection in sockets}
+            try:
+                while readers or any(pending.values()):
+                    # Bound buffering independently in each direction. A blocked
+                    # upload must not prevent an upstream response from flowing.
+                    readable, writable, exceptional = select.select(
+                        [source for source in readers if len(pending[other[source]]) < 65536],
+                        [destination for destination in sockets if pending[destination]],
+                        sockets,
+                    )
+                    if exceptional:
                         return
-                    destination = upstream if source is client else client
-                    destination.sendall(data)
+                    for destination in writable:
+                        try:
+                            sent = destination.send(pending[destination])
+                        except BlockingIOError:
+                            continue
+                        if not sent:
+                            return
+                        del pending[destination][:sent]
+                        source = other[destination]
+                        if not pending[destination] and source not in readers:
+                            destination.shutdown(socket.SHUT_WR)
+                    for source in readable:
+                        destination = other[source]
+                        try:
+                            data = source.recv(65536 - len(pending[destination]))
+                        except BlockingIOError:
+                            continue
+                        if data:
+                            pending[destination].extend(data)
+                        else:
+                            readers.remove(source)
+                            if not pending[destination]:
+                                destination.shutdown(socket.SHUT_WR)
+            except OSError:
+                # Connection resets and broken pipes terminate only this tunnel.
+                return
 
 
 class ThreadedProxy(socketserver.ThreadingTCPServer):
@@ -134,6 +164,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", nargs="?", type=int, default=18081)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
@@ -142,6 +173,8 @@ def main() -> None:
     except (OSError, TypeError, ValueError) as exc:
         parser.error(f"cannot load allowlist {args.config}: {exc}")
     with ThreadedProxy(("127.0.0.1", args.port), allowlist) as server:
+        if args.ready_file is not None:
+            args.ready_file.write_text("ready\n", encoding="ascii")
         server.serve_forever()
 
 
