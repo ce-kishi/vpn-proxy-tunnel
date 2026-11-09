@@ -10,15 +10,14 @@ APTなどのコマンドは、利用者が別のSSHセッションでリモー�
 |---|---|
 | `proxy-tunnel.sh` | ローカルプロキシとSSHリバース転送を起動・終了 |
 | `select_python3.sh` | 動作するPython 3を選択 |
-| `http_connect_proxy.py` | 許可された宛先へのHTTPS CONNECTを中継 |
-| `proxy-allowlist.json` | 接続先の許可リスト |
+| `http_connect_proxy.py` | 任意のホストの443番へのCONNECTを中継 |
 | `.env.example` | 接続設定のひな形 |
 
 ## 必要なもの
 
 - ローカル端末: Bash、Python 3.9以降、OpenSSHクライアント
 - ローカル端末からリモートサーバーへのSSH接続（必要に応じてVPN）
-- ローカル端末から許可された外部ホストへのHTTPS接続
+- ローカル端末から接続先ホストへのHTTPS接続
 - リモートサーバー: SSHサーバーとリバース転送の許可
 
 Pythonの追加ライブラリは不要です。SSHの認証・ホスト鍵確認には通常のOpenSSH設定を使います。
@@ -70,7 +69,7 @@ CONNECT後は無通信時間だけを理由に切断せず、送信待ちの間�
 ## リモート側でAPTを実行する
 
 別のターミナルから同じサーバーへSSH接続し、リモート側で実行します。
-取得先URLはHTTPSで、ホストが許可リストに含まれている必要があります。
+取得先URLはHTTPSである必要があります。接続先ホスト名の制限はありません。
 
 ```bash
 sudo apt -o Acquire::https::Proxy=http://127.0.0.1:18082 \
@@ -103,33 +102,22 @@ sudo dpkg --audit
 nvidia-smi
 ```
 
-## 接続許可リスト
+## 接続先と待受け
 
-`proxy-allowlist.json` の3項目をすべて記載します。
+任意のホストの443番へ接続できます。許可リストの設定は不要です。
+ローカルの待受けとSSHのリモート転送要求は `127.0.0.1` に限定しています。
+リモートサーバーの他ユーザーも、転送ポートを通じてローカル端末やVPNから
+到達できる任意の443番宛先へ接続できます。
 
-| 項目 | 許可範囲 |
-|---|---|
-| `exact_hosts` | ホスト名の完全一致 |
-| `domains_and_subdomains` | ドメイン本体とサブドメイン |
-| `subdomains_only` | サブドメインのみ（本体は拒否） |
-
-Ubuntu、NVIDIA、Docker、NodeSource、Tailscaleなどの取得先と、元のトンネルで
-使用していたOpenAI・ChatGPT・コンテナレジストリの許可設定を同梱しています。
-用途に合わせて編集してください。宛先ポートは443番限定です。
-
-ホスト名にはURL、ポート番号、`*` を含めません。ファイル不在、JSON構文エラー、
-未知の項目、不正な型・ホスト名は起動エラーになります。
-**編集後はトンネルを再起動してください。** 起動中のプロキシは自動再読み込みしません。
-
-プロキシを直接起動する場合は、別の設定ファイルを指定できます。
+プロキシを直接起動する場合:
 
 ```bash
-python3 http_connect_proxy.py 18082 --config /absolute/path/allowlist.json
+python3 http_connect_proxy.py 18082
 ```
 
 ## エラーの切り分け
 
-- `403 Forbidden`: ホストが許可リストに登録されているか、編集後に再起動したかを確認します。
+- `403 Forbidden`: 宛先ポートが443番であるか確認します。
 - `Connection refused`: トンネルの端末・VPN・SSH接続・ポート番号を確認します。
 - HTTP取得先への直接接続で失敗: 本プロキシはHTTPS CONNECT専用です。取得先をHTTPSへ変更します。
 - `dpkg` の設定エラー: 失敗したパッケージの設定ログやサービスログを確認します。
@@ -154,6 +142,6 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 bash -n proxy-tunnel.sh select_python3.sh
 ```
 
-テストは外部ネットワークを使用せず、許可範囲、設定エラー、ローカルCONNECT通信、
+テストは外部ネットワークを使用せず、任意ホストの許可、443番以外の拒否、ローカルCONNECT通信、
 ポート競合、起動遅延時のSSH開始順序、送信詰まり時の逆方向応答、
 無通信後の継続、送信終了時のバッファ転送を検証します。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Forward the local allowlisted HTTPS proxy; run no remote commands.
+# Forward the local HTTPS proxy; run no remote commands.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
